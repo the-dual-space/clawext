@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import os
 import re
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -233,6 +234,18 @@ class Extension:
         )
 
 
+def _resolve_skill(skill: str | Path, caller: Any) -> Path:
+    """Resolve a skill template path: absolute as given, relative to the declaring module or above."""
+    path = Path(skill)
+    if path.is_absolute():
+        return path
+    here = Path(str(caller.f_globals.get("__file__", "."))).resolve().parent
+    for base in (here, *here.parents):
+        if (base / path).is_file():
+            return base / path
+    return path
+
+
 def _coerce_needs(needs: Needs | Mapping[str, Sequence[str]] | None) -> Needs:
     if needs is None:
         return Needs()
@@ -308,6 +321,7 @@ def extension(
     if state not in STATE_CLASSES:
         raise UsageError(f"state must be one of {STATE_CLASSES}, got {state!r}")
     check_framework_range(requires_framework)
+    skill_path = _resolve_skill(skill, sys._getframe(1)) if skill is not None else None
     return Extension(
         name=name,
         about=about,
@@ -318,5 +332,5 @@ def extension(
         runs_on=runs_on,
         state=state,
         requires_framework=requires_framework,
-        skill_template=Path(skill) if skill is not None else None,
+        skill_template=skill_path,
     )

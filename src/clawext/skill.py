@@ -63,16 +63,20 @@ def _usage(cli: str, cmd: dict[str, Any]) -> str:
     parts = [cli, cmd["name"]]
     for p in cmd["params"]:
         if p["kind"] == "argument":
-            parts.append(f"<{p['name']}>")
+            parts.append(f"<{p['name']}>" if p["required"] else f"[{p['name']}]")
         else:
-            parts.append(f"[--{p['name']}]")
+            flags = "|".join([*p.get("short", []), f"--{p['name']}"])
+            parts.append(f"{flags}" if p["required"] else f"[{flags}]")
     return " ".join(parts)
 
 
 def _param_lines(cmd: dict[str, Any]) -> list[str]:
     lines = []
     for p in cmd["params"]:
-        flag = f"`--{p['name']}`" if p["kind"] == "option" else f"`<{p['name']}>`"
+        if p["kind"] == "option":
+            flag = "`" + "`, `".join([*p.get("short", []), f"--{p['name']}"]) + "`"
+        else:
+            flag = f"`<{p['name']}>`"
         bits = [p["type"]]
         if p.get("choices"):
             bits = ["|".join(p["choices"])]
