@@ -130,6 +130,25 @@ def Arg(
     return ArgSpec(help, metavar, exists)
 
 
+@dataclass(frozen=True)
+class GlobalOpt:
+    """An option accepted before the subcommand, readable as ``ctx.globals[name]``.
+
+    Attributes:
+        name: Key in ``ctx.globals`` (also the flag ``--name`` with ``_`` as ``-``).
+        type: ``str``, ``int``, ``float`` or ``bool`` (a flag).
+        default: Value when the option is not given.
+        help: Help text.
+        envvar: Optional environment variable that supplies the value.
+    """
+
+    name: str
+    type: type = str
+    default: Any = None
+    help: str = ""
+    envvar: str | None = None
+
+
 @dataclass
 class ParamSpec:
     """Everything known about one command parameter.

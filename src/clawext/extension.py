@@ -18,7 +18,7 @@ from . import __version__
 from .config import LoadedConfig, load_config
 from .context import Context
 from .errors import ExtensionError, UsageError, WrongHostError
-from .params import ParamSpec, describe_params, split_doc, takes_context
+from .params import GlobalOpt, ParamSpec, describe_params, split_doc, takes_context
 from .plugin import DEFAULT_PLUGIN, Plugin
 from .secrets import ScopedSecrets, SecretStore
 from .state import RUNS_ON_VALUES, STATE_CLASSES
@@ -121,6 +121,7 @@ class Extension:
         state: Sync class of the extension's state.
         requires_framework: Accepted clawext version range, if any.
         skill_template: Jinja template for the generated skill (built-in when ``None``).
+        global_options: Options accepted before the subcommand (``ctx.globals``).
         commands: Registered commands by name.
     """
 
@@ -134,6 +135,7 @@ class Extension:
     state: str = "host"
     requires_framework: str | None = None
     skill_template: Path | None = None
+    global_options: tuple[GlobalOpt, ...] = ()
     commands: dict[str, Command] = field(default_factory=dict)
 
     @overload
@@ -292,6 +294,7 @@ def extension(
     state: str = "host",
     requires_framework: str | None = None,
     skill: str | Path | None = None,
+    global_options: Sequence[GlobalOpt] = (),
 ) -> Extension:
     """Declare an extension.
 
@@ -306,6 +309,7 @@ def extension(
         state: State sync class: ``host``, ``git`` or ``server-owned``.
         requires_framework: Accepted clawext version range.
         skill: Path to a Jinja ``SKILL.md.j2`` template that replaces the built-in layout.
+        global_options: ``GlobalOpt`` entries accepted before the subcommand.
 
     Returns:
         The extension; register commands with ``@app.command``.
@@ -333,4 +337,5 @@ def extension(
         state=state,
         requires_framework=requires_framework,
         skill_template=skill_path,
+        global_options=tuple(global_options),
     )

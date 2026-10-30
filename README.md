@@ -84,6 +84,10 @@ generator command streams: each yielded item is printed immediately (one JSON ob
 with `--json`). `ctx.log(msg, live=True)` writes to stderr at once; `ctx.stdin_text()` reads
 piped input.
 
+Options that apply to every command (a host, a port) are declared once with
+`extension(..., global_options=[GlobalOpt("host", str, "localhost", "Target host")])`; they are
+accepted before the subcommand and read as `ctx.globals["host"]`.
+
 ## Config values
 
 - `${secret:name}` and `${env:VAR}` are expanded in any string, at any depth.

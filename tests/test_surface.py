@@ -74,3 +74,44 @@ def test_argument_help_appears_in_command_help(plugin_env: None) -> None:
     text = invoke(app, "find", "--help").stdout
     assert "Arguments:" in text
     assert "PATTERN  What to look for." in text
+
+
+def test_global_options_reach_ctx(plugin_env: None) -> None:
+    """Options declared with ``GlobalOpt`` go before the subcommand and land in ``ctx.globals``."""
+    from clawext import GlobalOpt
+
+    app = extension(
+        "g",
+        "Globals.",
+        global_options=[
+            GlobalOpt("host", str, "localhost", "Target host"),
+            GlobalOpt("port", int, 9222),
+        ],
+    )
+
+    @app.command
+    def where(ctx: Context) -> dict[str, object]:
+        """Where."""
+        return dict(ctx.globals)
+
+    import json
+
+    out = json.loads(invoke(app, "--json", "--host", "h1", "--port", "7", "where").stdout)
+    assert out == {"host": "h1", "port": 7}
+    assert json.loads(invoke(app, "--json", "where").stdout) == {"host": "localhost", "port": 9222}
+    assert "Target host" in invoke(app, "--help").stdout
+
+
+def test_optional_variadic_argument(plugin_env: None) -> None:
+    """``Arg()`` on a list parameter with a default is an optional ``nargs=-1`` argument."""
+    app = extension("v", "Variadic.")
+
+    @app.command
+    def pick(ctx: Context, names: Annotated[list[str] | None, Arg()] = None) -> list[str]:
+        """Pick."""
+        return list(names or [])
+
+    import json
+
+    assert json.loads(invoke(app, "--json", "pick").stdout) == []
+    assert json.loads(invoke(app, "--json", "pick", "a", "b").stdout) == ["a", "b"]

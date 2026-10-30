@@ -44,6 +44,7 @@ class Context:
         environ: Environment the run was started with.
         json_mode: Whether the caller asked for JSON output.
         messages: Diagnostics emitted through ``log`` (written to stderr by the CLI).
+        globals: Values of the extension's ``GlobalOpt`` options.
         live_sink: Receives ``log(..., live=True)`` lines immediately (the CLI wires stderr).
     """
 
@@ -55,6 +56,7 @@ class Context:
     json_mode: bool = False
     messages: list[str] = field(default_factory=list)
     live_sink: Callable[[str], None] | None = None
+    globals: dict[str, Any] = field(default_factory=dict)
 
     @property
     def config(self) -> Any:

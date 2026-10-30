@@ -14,7 +14,7 @@ import click
 from .context import Context, redact
 from .errors import EXIT_FAILURE, EXIT_OK, ClawextError, UsageError
 from .extension import Command, Extension
-from .params import ParamSpec, scalar_click_type
+from .params import GlobalOpt, ParamSpec, scalar_click_type
 from .render import render, render_error, to_jsonable
 
 
@@ -22,7 +22,8 @@ def _click_param(spec: ParamSpec) -> click.Parameter:
     """Build the Click parameter for one ParamSpec."""
     ctype = scalar_click_type(spec)
     if spec.kind == "argument":
-        extra: dict[str, Any] = {} if spec.required else {"default": spec.default}
+        # Click rejects a default on nargs=-1; an optional variadic simply is not required.
+        extra: dict[str, Any] = {} if spec.required or spec.multiple else {"default": spec.default}
         return click.Argument(
             [spec.name],
             type=ctype,
@@ -64,6 +65,9 @@ def _click_param(spec: ParamSpec) -> click.Parameter:
 def _signature_params(cmd: Command) -> list[click.Parameter]:
     return [_click_param(spec) for spec in cmd.params]
 
+
+GLOBALS_META = "clawext.globals"
+"""Key in ``click.Context.meta`` holding the values of the extension's global options."""
 
 JSON_META = "clawext.json"
 """Key in ``click.Context.meta`` (shared by the whole context tree) holding the JSON-mode flag."""
@@ -107,7 +111,14 @@ def _stream(ctx: Context, cmd: Command, items: Iterator[Any], *, json_mode: bool
     return EXIT_OK
 
 
-def run_command(ext: Extension, cmd: Command, kwargs: dict[str, Any], *, json_mode: bool) -> int:
+def run_command(
+    ext: Extension,
+    cmd: Command,
+    kwargs: dict[str, Any],
+    *,
+    json_mode: bool,
+    globals_: dict[str, Any] | None = None,
+) -> int:
     """Execute a command and print its result or error.
 
     Args:
@@ -115,6 +126,7 @@ def run_command(ext: Extension, cmd: Command, kwargs: dict[str, Any], *, json_mo
         cmd: Command to run.
         kwargs: Parsed arguments for the function (without the context).
         json_mode: Whether to emit JSON.
+        globals_: Values of the extension's global options.
 
     Returns:
         The process exit code.
@@ -125,6 +137,7 @@ def run_command(ext: Extension, cmd: Command, kwargs: dict[str, Any], *, json_mo
         ext.check_host()
         ctx = ext.build_context(json_mode=json_mode)
         ctx.live_sink = lambda line: click.echo(line, err=True)
+        ctx.globals = dict(globals_ or {})
         own_yes = any(p.name == "yes" for p in cmd.params)
         if cmd.destructive:
             confirmed = kwargs.get("yes", False) if own_yes else kwargs.pop("yes", False)
@@ -166,7 +179,11 @@ def _make_callback(ext: Extension, cmd: Command) -> Callable[..., None]:
     def callback(json_flag: bool = False, **kwargs: Any) -> None:
         click_ctx = click.get_current_context()
         code = run_command(
-            ext, cmd, kwargs, json_mode=json_flag or bool(click_ctx.meta.get(JSON_META))
+            ext,
+            cmd,
+            kwargs,
+            json_mode=json_flag or bool(click_ctx.meta.get(JSON_META)),
+            globals_=click_ctx.meta.get(GLOBALS_META),
         )
         if code:
             click_ctx.exit(code)
@@ -190,18 +207,45 @@ def to_click(ext: Extension, *, group: click.Group | None = None) -> click.Group
     return target
 
 
-def _new_group(ext: Extension) -> click.Group:
-    """Create the root Click group of an extension (``--json`` before the subcommand)."""
-
-    @click.group(
-        name=ext.name, help=ext.about, context_settings={"help_option_names": ["-h", "--help"]}
+def _global_click_option(opt: GlobalOpt) -> click.Option:
+    """Build the Click option for one global option."""
+    flag = f"--{opt.name.replace('_', '-')}"
+    if opt.type is bool:
+        return click.Option(
+            [flag, opt.name],
+            is_flag=True,
+            default=bool(opt.default),
+            help=opt.help or None,
+            envvar=opt.envvar,
+        )
+    ctype = {int: click.INT, float: click.FLOAT}.get(opt.type, click.STRING)
+    return click.Option(
+        [flag, opt.name], type=ctype, default=opt.default, help=opt.help or None, envvar=opt.envvar
     )
-    @click.option("--json", "json_flag", is_flag=True, default=False, help="Emit JSON.")
-    @click.pass_context
-    def root(click_ctx: click.Context, json_flag: bool) -> None:
-        click_ctx.meta[JSON_META] = json_flag or bool(click_ctx.meta.get(JSON_META))
 
-    return root
+
+def _new_group(ext: Extension) -> click.Group:
+    """Create the root Click group of an extension (``--json`` and global options before the subcommand)."""
+    names = [o.name for o in ext.global_options]
+
+    def root(click_ctx: click.Context, json_flag: bool, **values: Any) -> None:
+        click_ctx.meta[JSON_META] = json_flag or bool(click_ctx.meta.get(JSON_META))
+        click_ctx.meta[GLOBALS_META] = {
+            **click_ctx.meta.get(GLOBALS_META, {}),
+            **{k: values[k] for k in names},
+        }
+
+    params: list[click.Parameter] = [
+        click.Option(["--json", "json_flag"], is_flag=True, default=False, help="Emit JSON."),
+        *[_global_click_option(o) for o in ext.global_options],
+    ]
+    return click.Group(
+        name=ext.name,
+        help=ext.about,
+        context_settings={"help_option_names": ["-h", "--help"]},
+        params=params,
+        callback=click.pass_context(root),
+    )
 
 
 def _help_with_arguments(cmd: Command) -> str | None:

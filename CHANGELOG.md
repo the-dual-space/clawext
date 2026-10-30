@@ -22,9 +22,12 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - Jinja skill templates (`extension(skill=...)`), generated marker, parameter tables.
 - Config: `${env:VAR}`, nested `__` env overrides, deep merge, empty key means default.
 - Generator commands stream; `ctx.log(live=True)`, `ctx.stdin_text()`.
+- `GlobalOpt` / `extension(global_options=...)`: options before the subcommand, read as `ctx.globals`.
+- Positional argument help shown under `Arguments:` in `--help`; skill usage shows `[optional]` positionals and short flags.
 - `build_group`, `main_for(customize=, prog_name=, version=)`, `clawext.testing.invoke`.
 
 ### Fixed
+- Optional variadic arguments (`Arg()` on `list[T] | None`) no longer crash Click.
 - Required options stay required on Click >= 8.5; non-destructive commands can declare `yes`.
 - A command named like a free command wins; the free one is reachable as `ext-<name>`.
 

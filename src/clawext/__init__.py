@@ -16,7 +16,7 @@ from .errors import (
     WrongHostError,
 )
 from .extension import Config, Extension, Needs, extension
-from .params import Arg, Opt
+from .params import Arg, GlobalOpt, Opt
 from .plugin import Plugin
 from .render import Output
 
@@ -28,6 +28,7 @@ __all__ = [
     "Context",
     "Extension",
     "ExtensionError",
+    "GlobalOpt",
     "Needs",
     "Opt",
     "Output",
