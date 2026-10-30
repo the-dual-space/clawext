@@ -60,14 +60,16 @@ from typing import Annotated, Literal
 
 from clawext import Arg, Opt
 
+
 @app.command
 def find(
     ctx: Context,
-    pattern: str,                                              # positional
-    where: Annotated[str | None, Arg()] = None,                # optional positional
-    limit: Annotated[int, Opt("-n", help="Row limit")] = 10,   # -n / --limit
-    mode: Literal["fast", "full"] = "fast",                    # --mode {fast,full}
-    name: Annotated[str, Opt(required=True)] = ...,            # required option
+    pattern: str,  # positional
+    where: Annotated[str | None, Arg()] = None,  # optional positional
+    limit: Annotated[int, Opt("-n", help="Row limit")] = 10,  # -n / --limit
+    mode: Literal["fast", "full"] = "fast",  # --mode {fast,full}
+    *,
+    name: Annotated[str, Opt(required=True)],  # required option (no default)
 ) -> list[dict[str, str]]:
     """Find things.
 
