@@ -207,7 +207,7 @@ def _doctor_exit_output(result: Any) -> int:
 
 
 def add_builtin_commands(ext: Extension, group: click.Group) -> None:
-    """Attach the free commands to an extension's group (user commands win name clashes).
+    """Attach the free commands to an extension's group (an extension's own command of the same name wins; the free one becomes ``ext-<name>``).
 
     Args:
         ext: Extension the commands operate on.
@@ -220,5 +220,11 @@ def add_builtin_commands(ext: Extension, group: click.Group) -> None:
             add_command(ext, config_group, cmd)
         elif cmd.name not in group.commands:
             add_command(ext, group, cmd)
+        else:  # the extension's own command wins; the free one stays reachable as ext-<name>
+            cmd.name = f"ext-{cmd.name}"
+            add_command(ext, group, cmd)
     if "config" not in group.commands:
+        group.add_command(config_group)
+    else:
+        config_group.name = "ext-config"
         group.add_command(config_group)

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable, Mapping
+import sys
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,7 @@ class Context:
         environ: Environment the run was started with.
         json_mode: Whether the caller asked for JSON output.
         messages: Diagnostics emitted through ``log`` (written to stderr by the CLI).
+        live_sink: Receives ``log(..., live=True)`` lines immediately (the CLI wires stderr).
     """
 
     extension: str
@@ -52,6 +54,7 @@ class Context:
     environ: Mapping[str, str] = field(default_factory=lambda: dict(os.environ))
     json_mode: bool = False
     messages: list[str] = field(default_factory=list)
+    live_sink: Callable[[str], None] | None = None
 
     @property
     def config(self) -> Any:
@@ -84,10 +87,23 @@ class Context:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def log(self, message: str) -> None:
+    def log(self, message: str, *, live: bool = False) -> None:
         """Record a diagnostic line (secrets redacted); shown on stderr, never in the result.
 
         Args:
             message: Text to record.
+            live: Write it immediately (for long-running commands) instead of after the run.
         """
-        self.messages.append(redact(message, self.secrets.resolved))
+        text = redact(message, self.secrets.resolved)
+        if live and self.live_sink is not None:
+            self.live_sink(text)
+        else:
+            self.messages.append(text)
+
+    def stdin_text(self) -> str:
+        """Read all of standard input.
+
+        Returns:
+            The text piped into the command (empty when stdin is a terminal).
+        """
+        return "" if sys.stdin.isatty() else sys.stdin.read()

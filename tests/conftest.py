@@ -82,3 +82,9 @@ def sample() -> Extension:
         return {"items": items, "limit": limit}
 
     return app
+
+
+@pytest.fixture
+def plugin_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point the default plugin home at a temporary folder."""
+    monkeypatch.setenv("CLAWEXT_HOME", str(tmp_path / "home"))

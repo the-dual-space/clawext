@@ -15,12 +15,6 @@ from clawext.skill import generate_skill
 from tests.test_cli import invoke
 
 
-@pytest.fixture
-def plugin_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Point the default plugin home at a temporary folder."""
-    monkeypatch.setenv("CLAWEXT_HOME", str(tmp_path / "home"))
-
-
 def test_split_doc_extracts_arg_help() -> None:
     """The text before ``Args:`` is the summary and entries become per-arg help."""
     summary, args = split_doc(

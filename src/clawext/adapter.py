@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,7 +15,7 @@ from .context import Context, redact
 from .errors import EXIT_FAILURE, EXIT_OK, ClawextError, UsageError
 from .extension import Command, Extension
 from .params import ParamSpec, scalar_click_type
-from .render import render, render_error
+from .render import render, render_error, to_jsonable
 
 
 def _click_param(spec: ParamSpec) -> click.Parameter:
@@ -90,6 +91,22 @@ def _write_audit(ctx: Context, command: str, status: str, code: int) -> None:
         return
 
 
+def _stream(ctx: Context, cmd: Command, items: Iterator[Any], *, json_mode: bool) -> int:
+    """Print each yielded item as it is produced (one JSON object per line in JSON mode)."""
+    for item in items:
+        if json_mode:
+            out = json.dumps(to_jsonable(item), default=str)
+        else:
+            out = render(item, json_mode=False)
+        if out:
+            click.echo(redact(out, ctx.secrets.resolved))
+        sys.stdout.flush()
+    for line in ctx.messages:
+        click.echo(line, err=True)
+    _write_audit(ctx, cmd.name, "ok", EXIT_OK)
+    return EXIT_OK
+
+
 def run_command(ext: Extension, cmd: Command, kwargs: dict[str, Any], *, json_mode: bool) -> int:
     """Execute a command and print its result or error.
 
@@ -107,6 +124,7 @@ def run_command(ext: Extension, cmd: Command, kwargs: dict[str, Any], *, json_mo
     try:
         ext.check_host()
         ctx = ext.build_context(json_mode=json_mode)
+        ctx.live_sink = lambda line: click.echo(line, err=True)
         own_yes = any(p.name == "yes" for p in cmd.params)
         if cmd.destructive:
             confirmed = kwargs.get("yes", False) if own_yes else kwargs.pop("yes", False)
@@ -115,6 +133,8 @@ def run_command(ext: Extension, cmd: Command, kwargs: dict[str, Any], *, json_mo
                     f"'{cmd.name}' is destructive", hint="re-run with --yes to confirm"
                 )
         result = cmd.func(ctx, **kwargs) if cmd.wants_ctx else cmd.func(**kwargs)
+        if inspect.isgenerator(result):
+            return _stream(ctx, cmd, result, json_mode=json_mode)
         secrets = ctx.secrets.resolved
         for line in ctx.messages:
             click.echo(line, err=True)
@@ -200,15 +220,13 @@ def add_command(ext: Extension, group: click.Group, cmd: Command) -> None:
             )
         )
     params.append(_json_option())
-    group.add_command(
-        click.Command(
-            cmd.name,
-            callback=_make_callback(ext, cmd),
-            params=params,
-            help=cmd.help or None,
-            hidden=cmd.hidden,
+    callback = _make_callback(ext, cmd)
+    for name, hidden in [(cmd.name, cmd.hidden), *[(a, True) for a in cmd.aliases]]:
+        group.add_command(
+            click.Command(
+                name, callback=callback, params=params, help=cmd.help or None, hidden=hidden
+            )
         )
-    )
 
 
 def build_group(

@@ -17,6 +17,17 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - Entry-point discovery (`clawext.extensions`), extension manager and `extensions.yaml`
   sync, and the `clawext` hub CLI.
 
+- `Opt`/`Arg` parameter markers, `Literal`/`Enum` choices, docstring `Args:` help, optional
+  `ctx`, `aliases=`, `hidden=`, `exit_for=`; one `ParamSpec` feeds CLI, schema and skill.
+- Jinja skill templates (`extension(skill=...)`), generated marker, parameter tables.
+- Config: `${env:VAR}`, nested `__` env overrides, deep merge, empty key means default.
+- Generator commands stream; `ctx.log(live=True)`, `ctx.stdin_text()`.
+- `build_group`, `main_for(customize=, prog_name=, version=)`, `clawext.testing.invoke`.
+
+### Fixed
+- Required options stay required on Click >= 8.5; non-destructive commands can declare `yes`.
+- A command named like a free command wins; the free one is reachable as `ext-<name>`.
+
 ## [0.0.1] - 2026
 
 ### Added

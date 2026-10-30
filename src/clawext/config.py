@@ -17,6 +17,7 @@ from .plugin import Plugin
 from .secrets import ScopedSecrets
 
 _SECRET_RE = re.compile(r"\$\{secret:([A-Za-z0-9_.\-]+)\}")
+_ENV_RE = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
 
 SRC_DEFAULT = "default"
 SRC_SHARED = "shared file"
@@ -108,20 +109,74 @@ def _coerce_env(raw: str) -> Any:
         return raw
 
 
+def _deep_merge(base: dict[str, Any], extra: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge ``extra`` into ``base``; nested mappings merge key by key, anything else replaces."""
+    out = dict(base)
+    for key, value in extra.items():
+        if isinstance(value, Mapping) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _walk(value: Any, env: Mapping[str, str], secrets: ScopedSecrets, used: list[bool]) -> Any:
+    """Resolve ``${env:VAR}`` and ``${secret:name}`` in every string, at any depth."""
+    if isinstance(value, str):
+
+        def from_env(match: re.Match[str]) -> str:
+            name = match.group(1)
+            if name not in env:
+                raise ConfigError(f"config refers to unset environment variable '{name}'")
+            return env[name]
+
+        text = _ENV_RE.sub(from_env, value)
+        if _SECRET_RE.search(text):
+            used.append(True)
+            text = _SECRET_RE.sub(lambda m: secrets.get(m.group(1)), text)
+        return text
+    if isinstance(value, dict):
+        return {k: _walk(v, env, secrets, used) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_walk(v, env, secrets, used) for v in value]
+    return value
+
+
+def _env_value(raw: str) -> Any:
+    """Parse an env string: JSON lists/objects become structures, everything else stays text.
+
+    Scalars stay strings so pydantic can coerce them to the field type (``"7"`` to ``int``
+    or ``str`` alike).
+    """
+    value = _coerce_env(raw)
+    return value if isinstance(value, dict | list) else raw
+
+
 def _resolve_pointers(
     values: dict[str, Any],
     secrets: ScopedSecrets,
+    env: Mapping[str, str],
 ) -> tuple[dict[str, Any], set[str]]:
-    """Replace ``${secret:name}`` in top-level string values."""
+    """Resolve pointers in all values; keys that contained a secret are reported for masking."""
     out: dict[str, Any] = {}
     secret_keys: set[str] = set()
     for key, value in values.items():
-        if isinstance(value, str) and _SECRET_RE.search(value):
-            out[key] = _SECRET_RE.sub(lambda m: secrets.get(m.group(1)), value)
+        used: list[bool] = []
+        out[key] = _walk(value, env, secrets, used)
+        if used:
             secret_keys.add(key)
-        else:
-            out[key] = value
     return out, secret_keys
+
+
+def _set_nested(target: dict[str, Any], path: list[str], value: Any) -> None:
+    """Set ``target[a][b]... = value`` creating intermediate mappings."""
+    for part in path[:-1]:
+        nxt = target.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            target[part] = nxt
+        target = nxt
+    target[path[-1]] = value
 
 
 def load_config(
@@ -161,17 +216,31 @@ def load_config(
         if path.is_file():
             files.append(path)
             for key, value in read_yaml_mapping(path).items():
-                merged[key] = value
+                field_info = model.model_fields.get(key)
+                if (
+                    value is None
+                    and field_info is not None
+                    and field_info.get_default(call_default_factory=True) is not None
+                ):
+                    continue  # an empty key means "use the default"
+                merged = _deep_merge(merged, {key: value})
                 provenance[key] = label
 
     prefix = f"{plugin.env_prefix}_{extension.upper().replace('-', '_')}_"
     for name in model.model_fields:
         env_name = prefix + name.upper()
         if env_name in env:
-            merged[name] = _coerce_env(env[env_name])
+            merged[name] = _env_value(env[env_name])
+            provenance[name] = SRC_ENV
+        nested = env_name + "__"
+        for var in sorted(k for k in env if k.startswith(nested)):
+            keys = [name, *var[len(nested) :].lower().split("__")]
+            if not isinstance(merged.get(name), dict):
+                merged[name] = {}
+            _set_nested(merged, keys, _env_value(env[var]))
             provenance[name] = SRC_ENV
 
-    resolved, secret_keys = _resolve_pointers(merged, secrets)
+    resolved, secret_keys = _resolve_pointers(merged, secrets, env)
     for key in secret_keys:
         provenance[key] = SRC_SECRET
 
@@ -219,7 +288,7 @@ def set_config_value(
     path, _ = config_paths(plugin, extension, environ)
     data = read_yaml_mapping(path) if path.is_file() else {}
     data[key] = value
-    if not _SECRET_RE.search(str(value)):
+    if not (_SECRET_RE.search(str(value)) or _ENV_RE.search(str(value))):
         try:
             model.model_validate(
                 {**{k: v for k, v in data.items() if k != key}, key: value}, strict=False

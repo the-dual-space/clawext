@@ -53,6 +53,7 @@ class Command:
         destructive: Whether the command needs ``--yes`` to run.
         exit_for: Optional function mapping the result to a process exit code.
         hidden: Hide from ``--help`` (still callable).
+        aliases: Extra names that run the same command (hidden from help).
         params: Parameter specs, derived from the signature, annotations and docstring.
         wants_ctx: Whether the function takes the context as first parameter.
     """
@@ -63,6 +64,7 @@ class Command:
     destructive: bool = False
     exit_for: Callable[[Any], int] | None = None
     hidden: bool = False
+    aliases: tuple[str, ...] = ()
     params: list[ParamSpec] = field(default_factory=list)
     wants_ctx: bool = True
 
@@ -74,6 +76,7 @@ def make_command(
     destructive: bool = False,
     exit_for: Callable[[Any], int] | None = None,
     hidden: bool = False,
+    aliases: Sequence[str] = (),
 ) -> Command:
     """Build a :class:`Command` from a function, deriving help and parameters.
 
@@ -83,6 +86,7 @@ def make_command(
         destructive: Require ``--yes``.
         exit_for: Map the result to an exit code.
         hidden: Hide from ``--help``.
+        aliases: Extra names for the command.
 
     Returns:
         The command, with params taken from the signature, annotations and docstring.
@@ -95,6 +99,7 @@ def make_command(
         destructive,
         exit_for,
         hidden,
+        tuple(aliases),
         describe_params(func, arg_help),
         takes_context(func),
     )
@@ -141,6 +146,7 @@ class Extension:
         destructive: bool = False,
         exit_for: Callable[[Any], int] | None = None,
         hidden: bool = False,
+        aliases: Sequence[str] = (),
     ) -> Callable[[F], F]: ...
 
     def command(
@@ -151,6 +157,7 @@ class Extension:
         destructive: bool = False,
         exit_for: Callable[[Any], int] | None = None,
         hidden: bool = False,
+        aliases: Sequence[str] = (),
     ) -> F | Callable[[F], F]:
         """Register a function as a command (usable bare or with options).
 
@@ -160,6 +167,7 @@ class Extension:
             destructive: Require ``--yes`` before the command runs.
             exit_for: Map the result to a process exit code (non-zero without an error).
             hidden: Hide the command from ``--help``.
+            aliases: Extra names that run the same command.
 
         Returns:
             The function unchanged, or a decorator.
@@ -170,7 +178,12 @@ class Extension:
             if cmd_name in self.commands:
                 raise UsageError(f"duplicate command '{cmd_name}' in extension '{self.name}'")
             self.commands[cmd_name] = make_command(
-                cmd_name, target, destructive=destructive, exit_for=exit_for, hidden=hidden
+                cmd_name,
+                target,
+                destructive=destructive,
+                exit_for=exit_for,
+                hidden=hidden,
+                aliases=aliases,
             )
             return target
 
