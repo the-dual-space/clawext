@@ -57,3 +57,20 @@ def test_skill_path_resolves_next_to_module(plugin_env: None, tmp_path: Path) ->
     """A relative ``skill=`` path is found relative to the declaring module (or above)."""
     app = extension("r", "Rel.", skill="tests/test_surface.py")
     assert app.skill_template is not None and app.skill_template.is_file()
+
+
+def test_argument_help_appears_in_command_help(plugin_env: None) -> None:
+    """Positional help (docstring ``Args:``) is shown under ``Arguments:`` in ``--help``."""
+    app = extension("h", "Help.")
+
+    @app.command
+    def find(ctx: Context, pattern: str) -> None:
+        """Find things.
+
+        Args:
+            pattern: What to look for.
+        """
+
+    text = invoke(app, "find", "--help").stdout
+    assert "Arguments:" in text
+    assert "PATTERN  What to look for." in text

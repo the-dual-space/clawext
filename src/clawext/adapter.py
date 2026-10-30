@@ -204,6 +204,15 @@ def _new_group(ext: Extension) -> click.Group:
     return root
 
 
+def _help_with_arguments(cmd: Command) -> str | None:
+    """Return the command help with an ``Arguments:`` block (Click shows no help for arguments)."""
+    described = [p for p in cmd.params if p.kind == "argument" and p.help]
+    if not described:
+        return cmd.help or None
+    lines = [f"  {p.metavar or p.name.upper()}  {p.help}" for p in described]
+    return "\n\n".join(filter(None, [cmd.help, "\b\nArguments:\n" + "\n".join(lines)]))
+
+
 def add_command(ext: Extension, group: click.Group, cmd: Command) -> None:
     """Attach one command to a Click group.
 
@@ -221,11 +230,10 @@ def add_command(ext: Extension, group: click.Group, cmd: Command) -> None:
         )
     params.append(_json_option())
     callback = _make_callback(ext, cmd)
+    help_text = _help_with_arguments(cmd)
     for name, hidden in [(cmd.name, cmd.hidden), *[(a, True) for a in cmd.aliases]]:
         group.add_command(
-            click.Command(
-                name, callback=callback, params=params, help=cmd.help or None, hidden=hidden
-            )
+            click.Command(name, callback=callback, params=params, help=help_text, hidden=hidden)
         )
 
 
