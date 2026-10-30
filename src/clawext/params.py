@@ -192,6 +192,8 @@ def type_name(hint: Any) -> str:
     """
     if hint is inspect.Parameter.empty:
         return "str"
+    if hint is type(None):
+        return "None"
     origin = typing.get_origin(hint)
     if origin is None:
         return str(getattr(hint, "__name__", hint))

@@ -316,6 +316,6 @@ def test_schema_type_names() -> None:
     """Type names are short and readable."""
     assert type_name(int) == "int"
     assert type_name(list[str]) == "list[str]"
-    assert type_name(int | None) == "int | NoneType"
+    assert type_name(int | None) == "int | None"
     app = extension("noc", "No config.")
     assert extension_schema(app)["config"] == {}

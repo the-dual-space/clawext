@@ -234,6 +234,7 @@ def build_group(
     *,
     customize: Callable[[click.Group], None] | None = None,
     version: str | None = None,
+    prog_name: str | None = None,
 ) -> click.Group:
     """Build the complete Click group of an extension: commands, free commands, customizations.
 
@@ -242,6 +243,7 @@ def build_group(
         customize: Called with the group before the free commands are added; use it to mount
             nested Click groups or other hand-written commands.
         version: When given, ``--version`` prints it.
+        prog_name: Name shown by ``--version`` (default: the extension name).
 
     Returns:
         The ready-to-run group.
@@ -253,7 +255,7 @@ def build_group(
         customize(group)
     add_builtin_commands(ext, group)
     if version is not None:
-        click.version_option(version, "--version", prog_name=ext.name)(group)
+        click.version_option(version, "--version", prog_name=prog_name or ext.name)(group)
     return group
 
 
@@ -277,7 +279,7 @@ def main_for(
     """
 
     def main() -> None:
-        group = build_group(ext, customize=customize, version=version)
+        group = build_group(ext, customize=customize, version=version, prog_name=prog_name)
         group(prog_name=prog_name or ext.name)
         sys.exit(EXIT_OK)
 
