@@ -21,13 +21,14 @@ def _click_param(spec: ParamSpec) -> click.Parameter:
     """Build the Click parameter for one ParamSpec."""
     ctype = scalar_click_type(spec)
     if spec.kind == "argument":
+        extra: dict[str, Any] = {} if spec.required else {"default": spec.default}
         return click.Argument(
             [spec.name],
             type=ctype,
             nargs=-1 if spec.multiple else 1,
-            required=(spec.required and not spec.multiple) or (spec.multiple and spec.required),
-            default=None if spec.required else spec.default,
+            required=spec.required,
             metavar=spec.metavar,
+            **extra,
         )
     decls = [*spec.shorts]
     flag = spec.long or f"--{spec.name.replace('_', '-')}"
@@ -44,16 +45,18 @@ def _click_param(spec: ParamSpec) -> click.Parameter:
     default: Any = spec.default
     if spec.multiple:
         default = tuple(default) if default is not None else ()
+    # An explicit default=None makes newer Click treat a required option as satisfied.
+    extra = {} if spec.required else {"default": default}
     return click.Option(
         [flag, *decls, spec.name],
         type=ctype,
-        default=default,
         multiple=spec.multiple,
         required=spec.required,
         show_default=default not in (None, ()),
         help=spec.help or None,
         metavar=spec.metavar,
         hidden=spec.hidden,
+        **extra,
     )
 
 
