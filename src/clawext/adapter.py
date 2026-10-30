@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 import sys
-import types
-import typing
 from collections.abc import Callable
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import click
@@ -17,62 +13,52 @@ import click
 from .context import Context, redact
 from .errors import EXIT_FAILURE, EXIT_OK, ClawextError, UsageError
 from .extension import Command, Extension
+from .params import ParamSpec, scalar_click_type
 from .render import render, render_error
 
-_SCALARS: dict[Any, Any] = {
-    str: click.STRING,
-    int: click.INT,
-    float: click.FLOAT,
-    Path: click.Path(path_type=Path),
-}
 
-
-def _unwrap_optional(hint: Any) -> Any:
-    """Return ``X`` for ``X | None`` / ``Optional[X]``, else the hint itself."""
-    origin = typing.get_origin(hint)
-    if origin is typing.Union or origin is types.UnionType:
-        args = [a for a in typing.get_args(hint) if a is not type(None)]
-        if len(args) == 1:
-            return args[0]
-    return hint
-
-
-def _click_type(hint: Any) -> tuple[Any, bool]:
-    """Map an annotation to ``(click type, is_list)``."""
-    hint = _unwrap_optional(hint)
-    if typing.get_origin(hint) in (list, tuple):
-        inner = typing.get_args(hint)
-        return _SCALARS.get(inner[0] if inner else str, click.STRING), True
-    return _SCALARS.get(hint, click.STRING), False
-
-
-def _param(p: inspect.Parameter, hint: Any) -> click.Parameter:
-    """Build the Click parameter for one function parameter."""
-    flag = p.name.replace("_", "-")
-    base = _unwrap_optional(hint)
-    if base is bool:
-        flag_default = p.default is True
-        return click.Option([f"--{flag}/--no-{flag}"], default=flag_default, show_default=True)
-    ctype, is_list = _click_type(hint)
-    if p.default is inspect.Parameter.empty:
-        return click.Argument([p.name], type=ctype, nargs=-1 if is_list else 1, required=True)
-    default: Any = p.default
+def _click_param(spec: ParamSpec) -> click.Parameter:
+    """Build the Click parameter for one ParamSpec."""
+    ctype = scalar_click_type(spec)
+    if spec.kind == "argument":
+        return click.Argument(
+            [spec.name],
+            type=ctype,
+            nargs=-1 if spec.multiple else 1,
+            required=(spec.required and not spec.multiple) or (spec.multiple and spec.required),
+            default=None if spec.required else spec.default,
+            metavar=spec.metavar,
+        )
+    decls = [*spec.shorts]
+    flag = spec.long or f"--{spec.name.replace('_', '-')}"
+    if spec.is_flag:
+        decls.insert(0, f"{flag}/--no-{flag[2:]}" if spec.negatable else flag)
+        return click.Option(
+            [*decls, spec.name],
+            is_flag=True,
+            default=bool(spec.default),
+            show_default=spec.negatable,
+            help=spec.help or None,
+            hidden=spec.hidden,
+        )
+    default: Any = spec.default
+    if spec.multiple:
+        default = tuple(default) if default is not None else ()
     return click.Option(
-        [f"--{flag}"],
+        [flag, *decls, spec.name],
         type=ctype,
-        default=tuple(default) if is_list and default is not None else default,
-        multiple=is_list,
-        show_default=default is not None,
+        default=default,
+        multiple=spec.multiple,
+        required=spec.required,
+        show_default=default not in (None, ()),
+        help=spec.help or None,
+        metavar=spec.metavar,
+        hidden=spec.hidden,
     )
 
 
 def _signature_params(cmd: Command) -> list[click.Parameter]:
-    sig = inspect.signature(cmd.func)
-    hints = typing.get_type_hints(cmd.func)
-    params: list[click.Parameter] = []
-    for p in list(sig.parameters.values())[1:]:
-        params.append(_param(p, hints.get(p.name, str)))
-    return params
+    return [_click_param(spec) for spec in cmd.params]
 
 
 JSON_META = "clawext.json"
@@ -118,10 +104,14 @@ def run_command(ext: Extension, cmd: Command, kwargs: dict[str, Any], *, json_mo
     try:
         ext.check_host()
         ctx = ext.build_context(json_mode=json_mode)
-        if cmd.destructive and not kwargs.pop("yes", False):
-            raise UsageError(f"'{cmd.name}' is destructive", hint="re-run with --yes to confirm")
-        kwargs.pop("yes", None)
-        result = cmd.func(ctx, **kwargs)
+        own_yes = any(p.name == "yes" for p in cmd.params)
+        if cmd.destructive:
+            confirmed = kwargs.get("yes", False) if own_yes else kwargs.pop("yes", False)
+            if not confirmed:
+                raise UsageError(
+                    f"'{cmd.name}' is destructive", hint="re-run with --yes to confirm"
+                )
+        result = cmd.func(ctx, **kwargs) if cmd.wants_ctx else cmd.func(**kwargs)
         secrets = ctx.secrets.resolved
         for line in ctx.messages:
             click.echo(line, err=True)
@@ -200,7 +190,7 @@ def add_command(ext: Extension, group: click.Group, cmd: Command) -> None:
         cmd: Command to attach.
     """
     params = _signature_params(cmd)
-    if cmd.destructive:
+    if cmd.destructive and not any(p.name == "yes" for p in cmd.params):
         params.append(
             click.Option(
                 ["--yes"], is_flag=True, default=False, help="Confirm a destructive action."
@@ -209,7 +199,11 @@ def add_command(ext: Extension, group: click.Group, cmd: Command) -> None:
     params.append(_json_option())
     group.add_command(
         click.Command(
-            cmd.name, callback=_make_callback(ext, cmd), params=params, help=cmd.help or None
+            cmd.name,
+            callback=_make_callback(ext, cmd),
+            params=params,
+            help=cmd.help or None,
+            hidden=cmd.hidden,
         )
     )
 

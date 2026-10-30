@@ -15,7 +15,7 @@ from .adapter import add_command
 from .config import config_paths, set_config_value
 from .context import Context
 from .errors import EXIT_FAILURE, EXIT_OK, ConfigError
-from .extension import Command, Extension
+from .extension import Command, Extension, make_command
 from .render import Output, to_jsonable
 from .schema import extension_schema
 from .skill import generate_skill
@@ -188,7 +188,7 @@ def build_builtins(ext: Extension) -> dict[str, Command]:
         return Output({"skill": text}, text)
 
     def build(func: Any, name: str, exit_for: Any = None) -> Command:
-        return Command(name, func, (func.__doc__ or "").strip(), exit_for=exit_for)
+        return make_command(name, func, exit_for=exit_for)
 
     return {
         "doctor": build(doctor, "doctor", _doctor_exit_output),

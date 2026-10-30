@@ -222,6 +222,7 @@ def test_ext_list_update_remove_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(manager, "update", lambda dist, runner=None: calls.append(f"update {dist}"))
     monkeypatch.setattr(manager, "remove", lambda dist, runner=None: calls.append(f"remove {dist}"))
+    monkeypatch.setattr("clawext.cli.discover", lambda: [])
     hub = build_hub("demo", plugin=PLUGIN, discovered=[])
     cli = CliRunner()
     assert cli.invoke(hub, ["ext", "update", "d", "--json"]).exit_code == 0

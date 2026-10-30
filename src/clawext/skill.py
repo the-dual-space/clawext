@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import re
+from importlib import resources
+from pathlib import Path
 from typing import Any
+
+import jinja2
 
 from .errors import UsageError
 from .extension import Extension
@@ -49,24 +53,95 @@ def validate_skill(name: str, description: str) -> None:
         raise UsageError(f"skill description is {len(description)} chars, max {MAX_DESCRIPTION}")
 
 
+CONVENTIONS = (
+    "Every command accepts `--json`. Exit codes: 0 ok, 1 failure, "
+    "2 not configured or bad usage, 3 unreachable."
+)
+
+
 def _usage(cli: str, cmd: dict[str, Any]) -> str:
     parts = [cli, cmd["name"]]
     for p in cmd["params"]:
-        parts.append(f"<{p['name']}>" if p["kind"] == "argument" else f"[--{p['name']}]")
+        if p["kind"] == "argument":
+            parts.append(f"<{p['name']}>")
+        else:
+            parts.append(f"[--{p['name']}]")
     return " ".join(parts)
 
 
-def generate_skill(ext: Extension) -> str:
-    """Render the SKILL.md for an extension from its declaration.
+def _param_lines(cmd: dict[str, Any]) -> list[str]:
+    lines = []
+    for p in cmd["params"]:
+        flag = f"`--{p['name']}`" if p["kind"] == "option" else f"`<{p['name']}>`"
+        bits = [p["type"]]
+        if p.get("choices"):
+            bits = ["|".join(p["choices"])]
+        if p["required"]:
+            bits.append("required")
+        elif p.get("default") not in (None, [], False):
+            bits.append(f"default {p['default']}")
+        text = f"- {flag} ({', '.join(bits)})"
+        lines.append(f"{text}: {p['help']}" if p.get("help") else text)
+    return lines
+
+
+def render_commands(cli: str, schema: dict[str, Any]) -> str:
+    """Render the command reference block (usage, help, parameters) as Markdown.
+
+    Args:
+        cli: The command line prefix (``tds remote``).
+        schema: Result of :func:`extension_schema`.
+
+    Returns:
+        Markdown text, one section per command.
+    """
+    blocks: list[str] = []
+    for cmd in schema["commands"]:
+        lines = [f"### `{_usage(cli, cmd)}`", ""]
+        if cmd["help"]:
+            lines.extend([cmd["help"], ""])
+        params = _param_lines(cmd)
+        if params:
+            lines.extend([*params, ""])
+        if cmd["destructive"]:
+            lines.extend(["Destructive: requires `--yes`.", ""])
+        blocks.append("\n".join(lines).rstrip())
+    return "\n\n".join(blocks)
+
+
+def render_config(schema: dict[str, Any]) -> str:
+    """Render the config keys as a Markdown list.
+
+    Args:
+        schema: Result of :func:`extension_schema`.
+
+    Returns:
+        One bullet per key with type, default and description.
+    """
+    lines = []
+    for key, info in schema["config"].items():
+        text = f"- `{key}` ({info['type']}, default `{info['default']}`)"
+        lines.append(f"{text}: {info['description']}" if info["description"] else text)
+    return "\n".join(lines)
+
+
+def generate_skill(ext: Extension, template: str | Path | None = None) -> str:
+    """Render the SKILL.md for an extension from a Jinja template.
+
+    The template defaults to the built-in one; pass a path (or ``Extension.skill_template``)
+    for a hand-written skill with generated blocks. Variables: ``name``, ``description``,
+    ``about``, ``cli``, ``conventions``, ``commands_md``, ``config_md``, ``secrets``,
+    ``config`` and the full ``schema``. Undefined variables are errors.
 
     Args:
         ext: Extension to document.
+        template: Template file path, or ``None`` for the extension's own / built-in one.
 
     Returns:
         The full SKILL.md text (frontmatter plus body).
 
     Raises:
-        UsageError: The generated name or description violates the standard.
+        UsageError: The name/description violate the standard or the template is broken.
     """
     schema = extension_schema(ext)
     name = skill_name(ext)
@@ -76,37 +151,26 @@ def generate_skill(ext: Extension) -> str:
     )
     validate_skill(name, description)
     cli = ext.name if ext.plugin.name == DEFAULT_PLUGIN.name else f"{ext.plugin.name} {ext.name}"
-
-    lines = [
-        "---",
-        f"name: {name}",
-        f"description: {description}",
-        "---",
-        "",
-        f"# {name}",
-        "",
-        ext.about,
-        "",
-        "Every command accepts `--json`. Exit codes: 0 ok, 1 failure, 2 not configured or bad usage, 3 unreachable.",
-        "",
-        "## Commands",
-        "",
-    ]
-    for cmd in schema["commands"]:
-        lines.append(f"### `{_usage(cli, cmd)}`")
-        lines.append("")
-        if cmd["help"]:
-            lines.extend([cmd["help"], ""])
-        if cmd["destructive"]:
-            lines.extend(["Destructive: requires `--yes`.", ""])
-    if schema["secrets"]:
-        lines.extend(["## Secrets", "", *[f"- `{s}`" for s in schema["secrets"]], ""])
-    lines.extend(
-        [
-            "## Health",
-            "",
-            f"Run `{cli} doctor` to verify requirements and `{cli} status` for configuration state.",
-            "",
-        ]
+    source = template or ext.skill_template
+    text = (
+        Path(source).read_text()
+        if source is not None
+        else resources.files("clawext").joinpath("skill.md.j2").read_text()
     )
-    return "\n".join(lines)
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined, keep_trailing_newline=True)
+    try:
+        out = env.from_string(text).render(
+            name=name,
+            description=description,
+            about=ext.about,
+            cli=cli,
+            conventions=CONVENTIONS,
+            commands_md=render_commands(cli, schema),
+            config_md=render_config(schema),
+            secrets=schema["secrets"],
+            config=schema["config"],
+            schema=schema,
+        )
+    except jinja2.TemplateError as exc:
+        raise UsageError(f"skill template error: {exc}") from exc
+    return out if out.endswith("\n") else out + "\n"

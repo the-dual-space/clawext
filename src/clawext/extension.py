@@ -7,6 +7,7 @@ import os
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, TypeVar, overload
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
@@ -16,6 +17,7 @@ from . import __version__
 from .config import LoadedConfig, load_config
 from .context import Context
 from .errors import ExtensionError, UsageError, WrongHostError
+from .params import ParamSpec, describe_params, split_doc, takes_context
 from .plugin import DEFAULT_PLUGIN, Plugin
 from .secrets import ScopedSecrets, SecretStore
 from .state import RUNS_ON_VALUES, STATE_CLASSES
@@ -50,6 +52,9 @@ class Command:
         help: Docstring text used for ``--help`` and the generated skill.
         destructive: Whether the command needs ``--yes`` to run.
         exit_for: Optional function mapping the result to a process exit code.
+        hidden: Hide from ``--help`` (still callable).
+        params: Parameter specs, derived from the signature, annotations and docstring.
+        wants_ctx: Whether the function takes the context as first parameter.
     """
 
     name: str
@@ -57,6 +62,42 @@ class Command:
     help: str
     destructive: bool = False
     exit_for: Callable[[Any], int] | None = None
+    hidden: bool = False
+    params: list[ParamSpec] = field(default_factory=list)
+    wants_ctx: bool = True
+
+
+def make_command(
+    name: str,
+    func: Callable[..., Any],
+    *,
+    destructive: bool = False,
+    exit_for: Callable[[Any], int] | None = None,
+    hidden: bool = False,
+) -> Command:
+    """Build a :class:`Command` from a function, deriving help and parameters.
+
+    Args:
+        name: Command name.
+        func: The command function.
+        destructive: Require ``--yes``.
+        exit_for: Map the result to an exit code.
+        hidden: Hide from ``--help``.
+
+    Returns:
+        The command, with params taken from the signature, annotations and docstring.
+    """
+    summary, arg_help = split_doc(inspect.getdoc(func) or "")
+    return Command(
+        name,
+        func,
+        summary,
+        destructive,
+        exit_for,
+        hidden,
+        describe_params(func, arg_help),
+        takes_context(func),
+    )
 
 
 @dataclass
@@ -73,6 +114,7 @@ class Extension:
         runs_on: ``local``, ``server`` or ``any``.
         state: Sync class of the extension's state.
         requires_framework: Accepted clawext version range, if any.
+        skill_template: Jinja template for the generated skill (built-in when ``None``).
         commands: Registered commands by name.
     """
 
@@ -85,6 +127,7 @@ class Extension:
     runs_on: str = "any"
     state: str = "host"
     requires_framework: str | None = None
+    skill_template: Path | None = None
     commands: dict[str, Command] = field(default_factory=dict)
 
     @overload
@@ -92,7 +135,12 @@ class Extension:
 
     @overload
     def command(
-        self, *, name: str | None = None, destructive: bool = False
+        self,
+        *,
+        name: str | None = None,
+        destructive: bool = False,
+        exit_for: Callable[[Any], int] | None = None,
+        hidden: bool = False,
     ) -> Callable[[F], F]: ...
 
     def command(
@@ -101,6 +149,8 @@ class Extension:
         *,
         name: str | None = None,
         destructive: bool = False,
+        exit_for: Callable[[Any], int] | None = None,
+        hidden: bool = False,
     ) -> F | Callable[[F], F]:
         """Register a function as a command (usable bare or with options).
 
@@ -108,6 +158,8 @@ class Extension:
             func: The function when used as ``@app.command``.
             name: Override the command name (default: function name, ``_`` to ``-``).
             destructive: Require ``--yes`` before the command runs.
+            exit_for: Map the result to a process exit code (non-zero without an error).
+            hidden: Hide the command from ``--help``.
 
         Returns:
             The function unchanged, or a decorator.
@@ -117,11 +169,9 @@ class Extension:
             cmd_name = name or target.__name__.replace("_", "-")
             if cmd_name in self.commands:
                 raise UsageError(f"duplicate command '{cmd_name}' in extension '{self.name}'")
-            params = list(inspect.signature(target).parameters.values())
-            if not params:
-                raise UsageError(f"command '{cmd_name}' must take the context as first parameter")
-            doc = inspect.getdoc(target) or ""
-            self.commands[cmd_name] = Command(cmd_name, target, doc, destructive)
+            self.commands[cmd_name] = make_command(
+                cmd_name, target, destructive=destructive, exit_for=exit_for, hidden=hidden
+            )
             return target
 
         return register(func) if func is not None else register
@@ -215,6 +265,7 @@ def extension(
     runs_on: str = "any",
     state: str = "host",
     requires_framework: str | None = None,
+    skill: str | Path | None = None,
 ) -> Extension:
     """Declare an extension.
 
@@ -228,6 +279,7 @@ def extension(
         runs_on: ``local``, ``server`` or ``any``.
         state: State sync class: ``host``, ``git`` or ``server-owned``.
         requires_framework: Accepted clawext version range.
+        skill: Path to a Jinja ``SKILL.md.j2`` template that replaces the built-in layout.
 
     Returns:
         The extension; register commands with ``@app.command``.
@@ -253,4 +305,5 @@ def extension(
         runs_on=runs_on,
         state=state,
         requires_framework=requires_framework,
+        skill_template=Path(skill) if skill is not None else None,
     )

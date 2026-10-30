@@ -2,32 +2,11 @@
 
 from __future__ import annotations
 
-import inspect
-import typing
 from typing import Any
 
 from .extension import Command, Extension
+from .params import type_name
 from .render import to_jsonable
-
-
-def type_name(hint: Any) -> str:
-    """Return a short readable name for a type annotation.
-
-    Args:
-        hint: A type annotation.
-
-    Returns:
-        For example ``"int"``, ``"Path"`` or ``"list[str]"``.
-    """
-    if hint is inspect.Parameter.empty:
-        return "str"
-    origin = typing.get_origin(hint)
-    if origin is None:
-        return str(getattr(hint, "__name__", hint))
-    args = ", ".join(type_name(a) for a in typing.get_args(hint))
-    if getattr(origin, "__name__", "") in ("UnionType", "Union"):
-        return " | ".join(type_name(a) for a in typing.get_args(hint))
-    return f"{getattr(origin, '__name__', str(origin))}[{args}]"
 
 
 def command_params(cmd: Command) -> list[dict[str, Any]]:
@@ -37,20 +16,24 @@ def command_params(cmd: Command) -> list[dict[str, Any]]:
         cmd: Command to describe.
 
     Returns:
-        One mapping per parameter with name, kind, type, required and default.
+        One mapping per parameter with name, kind, type, required, default, help, choices.
     """
-    hints = typing.get_type_hints(cmd.func)
     out: list[dict[str, Any]] = []
-    for p in list(inspect.signature(cmd.func).parameters.values())[1:]:
-        required = p.default is inspect.Parameter.empty
+    for spec in cmd.params:
         entry: dict[str, Any] = {
-            "name": p.name.replace("_", "-"),
-            "kind": "argument" if required else "option",
-            "type": type_name(hints.get(p.name, str)),
-            "required": required,
+            "name": spec.display,
+            "kind": spec.kind,
+            "type": spec.type_name,
+            "required": spec.required,
         }
-        if not required:
-            entry["default"] = to_jsonable(p.default)
+        if not spec.required:
+            entry["default"] = to_jsonable(spec.default)
+        if spec.help:
+            entry["help"] = spec.help
+        if spec.choices:
+            entry["choices"] = list(spec.choices)
+        if spec.shorts:
+            entry["short"] = list(spec.shorts)
         out.append(entry)
     return out
 

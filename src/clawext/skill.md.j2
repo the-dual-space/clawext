@@ -1,0 +1,31 @@
+---
+name: {{ name }}
+description: {{ description }}
+---
+
+# {{ name }}
+
+{{ about }}
+
+{{ conventions }}
+
+## Commands
+
+{{ commands_md }}
+{%- if secrets %}
+
+## Secrets
+
+{% for s in secrets %}- `{{ s }}`
+{% endfor %}
+{%- endif %}
+{%- if config %}
+
+## Config
+
+{{ config_md }}
+{%- endif %}
+
+## Health
+
+Run `{{ cli }} doctor` to verify requirements and `{{ cli }} status` for configuration state.
