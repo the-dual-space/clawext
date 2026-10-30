@@ -1,0 +1,134 @@
+[build-system]
+requires = ["hatchling>=1.27"]  # >=1.27 for PEP 639 license-expression support
+build-backend = "hatchling.build"
+
+[project]
+name = "clawext"
+description = "Extension framework for agent CLI tools: declare a tool once, get a CLI, a skill, health checks and optional MCP."
+authors = [{ name = "Julian Blank", email = "blankjul@outlook.com" }]
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE*"]
+requires-python = ">=3.11"
+keywords = ["agents", "cli", "mcp", "skills", "extensions"]
+dynamic = ["version"]
+dependencies = [
+    "click>=8.1",
+    "pydantic>=2.5",
+    "pyyaml>=6",
+    "packaging>=23",
+]
+
+[project.scripts]
+clawext = "clawext.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/anyoptimization/clawext"
+Source = "https://github.com/anyoptimization/clawext"
+
+# Single source of truth for the version: src/clawext/__init__.py::__version__.
+[tool.hatch.version]
+path = "src/clawext/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clawext"]
+include = ["src/clawext/py.typed"]
+
+# PEP 735 dependency group — dev tooling, NOT a shipped extra.
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-xdist>=3",  # `pyclawd test fast` runs under `-n auto`
+    "pytest-cov>=5",
+    "ruff>=0.6,<0.16",  # 0.16+ also formats Markdown code blocks (see pyclawd CHANGELOG)
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+# --------------------------------------------------------------------------- #
+# Code-quality toolchain (run via `pyclawd lint/format/typecheck/check`).
+# --------------------------------------------------------------------------- #
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+# A docs/ runner (if you add one) is an isolated sub-project with its own
+# pyproject/style — keep pyclawd's lint/format out of it.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+# pyflakes (F), pycodestyle (E), isort (I), bugbear (B), pyupgrade (UP),
+# flake8-simplify (SIM), comprehensions (C4), ruff (RUF), pygrep-hooks (PGH),
+# pydocstyle (D). NOTE: `DOC` (pydoclint) is deliberately omitted — it only runs
+# under ruff's unstable `preview`, so selecting it is a silent no-op + a warning.
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "PGH", "D"]
+ignore = ["E501"]
+
+[tool.ruff.lint.pydocstyle]
+# Google style without types — type annotations are the source of truth (mypy).
+# (`convention` selects which D rules run; it does not by itself reject a NumPy
+# `Parameters` block — the no-types Args/Returns style is upheld by review/agents.)
+convention = "google"
+
+[tool.ruff.lint.flake8-bugbear]
+# typer.Option/Argument are safe in function defaults — they create descriptors.
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests don't need docstrings.
+"tests/*.py" = ["D"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = true
+warn_unused_configs = true
+warn_unused_ignores = true
+# Needed for `pyclawd typecheck/check <file>` — prevents "Duplicate module"
+# errors when mypy resolves a single source file by path instead of by name.
+explicit_package_bases = true
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+]
+# Parallelism is injected by `pyclawd test` (TestConfig.jobs, default "auto") — so
+# bare `pytest` stays runnable without pytest-xdist and `pyclawd test` is parallel.
+xfail_strict = true
+markers = [
+    "slow: tests taking >1s — excluded from the fast and default tiers",
+    "integration: tests requiring external services/network/filesystem — excluded from fast",
+    # Optional extra expense tier — uncomment + add a tier (e.g. default = "not long")
+    # only if you want to defer the most expensive tests to a nightly `all` run:
+    # "long: tests too expensive even for the default gate (multi-minute)",
+    # Uncomment when you opt into the golden behavior-regression oracle
+    # (set `golden=GoldenConfig()` in .pyclawd/config.py — see `pyclawd-golden`):
+    # "golden: behavior-regression snapshot test (compared via `pyclawd golden`)",
+    # Uncomment when you opt into the benchmark performance-regression oracle
+    # (set `benchmark=BenchmarkConfig()` in .pyclawd/config.py):
+    # "benchmark: performance-regression timing test (gated via `pyclawd benchmark`)",
+]
+filterwarnings = [
+    "error",
+]
+
+[tool.coverage.run]
+source = ["src/clawext"]
+branch = true
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
