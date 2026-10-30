@@ -208,21 +208,56 @@ def add_command(ext: Extension, group: click.Group, cmd: Command) -> None:
     )
 
 
-def main_for(ext: Extension) -> Callable[[], None]:
+def build_group(
+    ext: Extension,
+    *,
+    customize: Callable[[click.Group], None] | None = None,
+    version: str | None = None,
+) -> click.Group:
+    """Build the complete Click group of an extension: commands, free commands, customizations.
+
+    Args:
+        ext: Extension to serve.
+        customize: Called with the group before the free commands are added; use it to mount
+            nested Click groups or other hand-written commands.
+        version: When given, ``--version`` prints it.
+
+    Returns:
+        The ready-to-run group.
+    """
+    from .builtin import add_builtin_commands
+
+    group = to_click(ext)
+    if customize is not None:
+        customize(group)
+    add_builtin_commands(ext, group)
+    if version is not None:
+        click.version_option(version, "--version", prog_name=ext.name)(group)
+    return group
+
+
+def main_for(
+    ext: Extension,
+    *,
+    customize: Callable[[click.Group], None] | None = None,
+    prog_name: str | None = None,
+    version: str | None = None,
+) -> Callable[[], None]:
     """Return a ``main()`` entry point for an extension, suitable for ``[project.scripts]``.
 
     Args:
         ext: Extension to serve.
+        customize: Hook to mount extra Click commands (see :func:`build_group`).
+        prog_name: Program name shown in help (default: the extension name).
+        version: When given, ``--version`` prints it.
 
     Returns:
         A zero-argument function that runs the CLI and exits with its code.
     """
-    from .builtin import add_builtin_commands
 
     def main() -> None:
-        group = to_click(ext)
-        add_builtin_commands(ext, group)
-        group(prog_name=ext.name)
+        group = build_group(ext, customize=customize, version=version)
+        group(prog_name=prog_name or ext.name)
         sys.exit(EXIT_OK)
 
     return main

@@ -150,3 +150,30 @@ def test_default_skill_lists_params(sample: Extension) -> None:
     assert "- `--times` (int, default 1)" in text
     assert "## Config" in text
     assert text.endswith("\n")
+
+
+def test_build_group_customize_and_version(plugin_env: None) -> None:
+    """``build_group`` lets an extension mount extra Click commands and a version flag."""
+    import click
+    from click.testing import CliRunner
+
+    from clawext.adapter import build_group
+
+    app = extension("b", "Build.")
+
+    @app.command
+    def one(ctx: Context) -> int:
+        """One."""
+        return 1
+
+    def extra(group: click.Group) -> None:
+        @group.command("hand")
+        def hand() -> None:
+            """Hand-written."""
+            click.echo("hi")
+
+    group = build_group(app, customize=extra, version="9.9")
+    runner = CliRunner()
+    assert runner.invoke(group, ["hand"]).stdout.strip() == "hi"
+    assert "9.9" in runner.invoke(group, ["--version"]).stdout
+    assert "doctor" in runner.invoke(group, ["--help"]).stdout

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 __version__ = "0.0.1"
 
-from .adapter import main_for, to_click
+from .adapter import build_group, main_for, to_click
 from .context import Context
 from .errors import (
     ClawextError,
@@ -16,10 +16,12 @@ from .errors import (
     WrongHostError,
 )
 from .extension import Config, Extension, Needs, extension
+from .params import Arg, Opt
 from .plugin import Plugin
 from .render import Output
 
 __all__ = [
+    "Arg",
     "ClawextError",
     "Config",
     "ConfigError",
@@ -27,6 +29,7 @@ __all__ = [
     "Extension",
     "ExtensionError",
     "Needs",
+    "Opt",
     "Output",
     "Plugin",
     "SecretError",
@@ -34,6 +37,7 @@ __all__ = [
     "UsageError",
     "WrongHostError",
     "__version__",
+    "build_group",
     "extension",
     "main_for",
     "to_click",
