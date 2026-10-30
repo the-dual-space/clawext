@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from importlib.metadata import EntryPoint
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -87,15 +88,16 @@ def test_hub_plugin_filter() -> None:
     """A plugin hub shows only its own extensions."""
     results = discover([make_ep("alpha", "tests.test_hub:SAMPLE_EXT")])
     other = build_hub("other", plugin=PLUGIN.__class__("other"), discovered=results)
-    assert "alpha" not in other.commands
+    assert "alpha" not in other.list_commands(click.Context(other))
     mine = build_hub("mine", plugin=PLUGIN, discovered=results)
-    assert "alpha" in mine.commands
+    assert "alpha" in mine.list_commands(click.Context(mine))
 
 
 def test_hub_skips_broken_extensions() -> None:
     """Entries that failed to load do not appear in the hub."""
     results = discover([make_ep("broken", "no_such_module_xyz:thing")])
-    assert "broken" not in build_hub("demo", discovered=results).commands
+    hub = build_hub("demo", discovered=results)
+    assert "broken" not in hub.list_commands(click.Context(hub))
 
 
 class FakeRunner:
@@ -247,3 +249,74 @@ def test_main_runs_the_hub(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as info:
         main()
     assert info.value.code == 0
+
+
+def test_hub_level_json_reaches_extensions() -> None:
+    """``hub --json ext cmd`` and ``hub ext --json cmd`` both produce JSON."""
+    hub = hub_for_sample()
+    before = CliRunner().invoke(hub, ["--json", "alpha", "ping"])  # type: ignore[arg-type]
+    after = CliRunner().invoke(hub, ["alpha", "--json", "ping"])  # type: ignore[arg-type]
+    assert json.loads(before.stdout) == json.loads(after.stdout) == "pong"
+
+
+def test_hub_fallback_and_extra_names() -> None:
+    """Unknown subcommands go to the fallback; its names show up in listings."""
+
+    @click.command("legacy")
+    def legacy() -> None:
+        """Legacy passthrough."""
+        click.echo("from legacy")
+
+    hub = build_hub(
+        "demo",
+        plugin=PLUGIN,
+        discovered=[],
+        fallback=lambda name: legacy if name == "legacy" else None,
+        extra_names=lambda: ["legacy"],
+    )
+    assert CliRunner().invoke(hub, ["legacy"]).stdout.strip() == "from legacy"
+    assert "legacy" in hub.list_commands(click.Context(hub))
+    assert CliRunner().invoke(hub, ["nope"]).exit_code == 2
+
+
+def test_hub_loads_entry_points_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the requested extension is imported; listing loads the rest."""
+    loaded: list[str] = []
+    real = load_entry_point
+
+    def tracking(ep: EntryPoint) -> Extension:
+        loaded.append(ep.name)
+        return real(ep)
+
+    eps = [
+        make_ep("alpha", "tests.test_hub:SAMPLE_EXT"),
+        make_ep("other", "tests.test_hub:SAMPLE_EXT"),
+    ]
+    monkeypatch.setattr("clawext.cli.load_entry_point", tracking)
+    monkeypatch.setattr(
+        "clawext.cli.entry_points",
+        lambda group, name=None: [e for e in eps if name is None or e.name == name],
+    )
+    hub = build_hub("demo")
+    assert CliRunner().invoke(hub, ["alpha", "ping"]).stdout.strip() == "pong"
+    assert loaded == ["alpha"]
+    hub.list_commands(click.Context(hub))
+    assert sorted(loaded) == ["alpha", "other"]
+
+
+def test_hub_reports_broken_extension_on_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A broken extension fails with a clear message only when it is used."""
+    eps = [make_ep("broken", "no_such_module_xyz:thing")]
+    monkeypatch.setattr(
+        "clawext.cli.entry_points",
+        lambda group, name=None: [e for e in eps if name is None or e.name == name],
+    )
+    result = CliRunner().invoke(build_hub("demo"), ["broken"])
+    assert result.exit_code == 1
+    assert "cannot load 'broken'" in result.stderr
+
+
+def test_hub_version_flag() -> None:
+    """``--version`` prints the clawext version."""
+    result = CliRunner().invoke(build_hub("demo", discovered=[]), ["--version"])
+    assert result.stdout.startswith("clawext ")

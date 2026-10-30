@@ -75,6 +75,10 @@ def _signature_params(cmd: Command) -> list[click.Parameter]:
     return params
 
 
+JSON_META = "clawext.json"
+"""Key in ``click.Context.meta`` (shared by the whole context tree) holding the JSON-mode flag."""
+
+
 def _json_option() -> click.Option:
     return click.Option(["--json", "json_flag"], is_flag=True, default=False, help="Emit JSON.")
 
@@ -148,8 +152,9 @@ def run_command(ext: Extension, cmd: Command, kwargs: dict[str, Any], *, json_mo
 def _make_callback(ext: Extension, cmd: Command) -> Callable[..., None]:
     def callback(json_flag: bool = False, **kwargs: Any) -> None:
         click_ctx = click.get_current_context()
-        group_json = bool((click_ctx.parent.obj or {}).get("json")) if click_ctx.parent else False
-        code = run_command(ext, cmd, kwargs, json_mode=json_flag or group_json)
+        code = run_command(
+            ext, cmd, kwargs, json_mode=json_flag or bool(click_ctx.meta.get(JSON_META))
+        )
         if code:
             click_ctx.exit(code)
 
@@ -181,8 +186,7 @@ def _new_group(ext: Extension) -> click.Group:
     @click.option("--json", "json_flag", is_flag=True, default=False, help="Emit JSON.")
     @click.pass_context
     def root(click_ctx: click.Context, json_flag: bool) -> None:
-        click_ctx.ensure_object(dict)
-        click_ctx.obj["json"] = json_flag
+        click_ctx.meta[JSON_META] = json_flag or bool(click_ctx.meta.get(JSON_META))
 
     return root
 

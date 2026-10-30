@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable, Iterable
+from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any
 
 import click
 
 from . import __version__, manager
-from .adapter import to_click
+from .adapter import JSON_META, to_click
 from .builtin import add_builtin_commands
-from .discovery import Discovered, discover
-from .errors import EXIT_FAILURE, ClawextError
+from .discovery import GROUP, Discovered, discover, load_entry_point
+from .errors import EXIT_FAILURE, ClawextError, ExtensionError
+from .extension import Extension
 from .plugin import DEFAULT_PLUGIN, Plugin
 from .render import render, render_error
 
@@ -131,46 +134,155 @@ def _ext_group(plugin: Plugin) -> click.Group:
     return ext
 
 
+class HubGroup(click.Group):
+    """A group that mounts installed extensions lazily, with an optional fallback.
+
+    Extensions are looked up by entry-point name and loaded only when their subcommand is used,
+    so ``hub remote ...`` never imports heavy sibling extensions. Listing (``--help``) loads all.
+
+    Attributes:
+        plugin: Restrict the hub to extensions of this plugin (``None`` shows all).
+        fallback: Called with an unknown subcommand name; may return a command (for example a
+            passthrough to a legacy executable).
+        extra_names: Called to list names that only the fallback can serve.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        plugin: Plugin | None = None,
+        discovered: list[Discovered] | None = None,
+        fallback: Callable[[str], click.Command | None] | None = None,
+        extra_names: Callable[[], Iterable[str]] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create the hub group.
+
+        Args:
+            *args: Positional arguments for :class:`click.Group`.
+            plugin: Restrict the hub to extensions of this plugin.
+            discovered: Pre-loaded discovery results; entry points are not scanned when given.
+            fallback: Resolver for names no extension provides.
+            extra_names: Names the fallback can serve (shown in listings).
+            **kwargs: Keyword arguments for :class:`click.Group`.
+        """
+        super().__init__(*args, **kwargs)
+        self.plugin = plugin
+        self.fallback = fallback
+        self.extra_names = extra_names
+        self._loaded: dict[str, click.Group | None] = {}
+        self._fixed = discovered
+        if discovered is not None:
+            for item in discovered:
+                if item.extension is not None:
+                    self._loaded[item.entry] = self._mount(item.extension)
+
+    def _mount(self, ext: Extension) -> click.Group | None:
+        """Build the Click group of an extension unless it belongs to another plugin."""
+        if self.plugin is not None and ext.plugin.name != self.plugin.name:
+            return None
+        group = to_click(ext)
+        add_builtin_commands(ext, group)
+        return group
+
+    def _names(self) -> list[str]:
+        if self._fixed is not None:
+            return [d.entry for d in self._fixed if d.extension is not None]
+        return sorted(ep.name for ep in entry_points(group=GROUP))
+
+    def _extension_group(self, name: str) -> click.Group | None:
+        if name not in self._loaded:
+            self._loaded[name] = None
+            if self._fixed is None:
+                for ep in entry_points(group=GROUP, name=name):
+                    try:
+                        self._loaded[name] = self._mount(load_entry_point(ep))
+                    except ExtensionError as exc:
+                        raise click.ClickException(str(exc)) from exc
+                    break
+        return self._loaded[name]
+
+    def get_command(self, ctx: click.Context, name: str) -> click.Command | None:
+        """Return a built-in command, a mounted extension, or the fallback's command."""
+        found = super().get_command(ctx, name)
+        if found is not None:
+            return found
+        group = self._extension_group(name)
+        if group is not None:
+            return group
+        return self.fallback(name) if self.fallback else None
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        """List built-in commands, extensions (of this plugin) and fallback names."""
+        names = set(super().list_commands(ctx))
+        for name in self._names():
+            if self._extension_group(name) is not None:
+                names.add(name)
+        if self.extra_names:
+            names.update(self.extra_names())
+        return sorted(names)
+
+
 def build_hub(
     name: str = "clawext",
     plugin: Plugin | None = None,
     discovered: list[Discovered] | None = None,
     *,
     help_text: str | None = None,
-) -> click.Group:
-    """Build a hub group: ``ext`` management plus one subgroup per extension.
+    fallback: Callable[[str], click.Command | None] | None = None,
+    extra_names: Callable[[], Iterable[str]] | None = None,
+) -> HubGroup:
+    """Build a hub group: ``ext`` management plus one lazily loaded subgroup per extension.
+
+    ``hub --json <ext> <cmd>`` and ``hub <ext> --json <cmd>`` are equivalent.
 
     Args:
         name: Hub command name.
         plugin: Restrict the hub to extensions of this plugin; ``None`` shows all.
-        discovered: Pre-loaded discovery results (loaded from entry points when omitted).
+        discovered: Pre-loaded discovery results (entry points are scanned lazily when omitted).
         help_text: Help string for the hub.
+        fallback: Resolver for subcommands no extension provides (for example legacy binaries).
+        extra_names: Names the fallback can serve, shown in listings.
 
     Returns:
-        The Click group.
+        The hub group.
     """
-    owner = plugin or DEFAULT_PLUGIN
-    results = discover() if discovered is None else discovered
-
-    @click.group(
+    hub = HubGroup(
         name,
         help=help_text or f"{name}: agent-callable CLI extensions.",
         context_settings={"help_option_names": ["-h", "--help"]},
+        plugin=plugin,
+        discovered=discovered,
+        fallback=fallback,
+        extra_names=extra_names,
+        params=[
+            click.Option(["--json", "json_flag"], is_flag=True, default=False, help="Emit JSON."),
+            click.Option(
+                ["--version"],
+                is_flag=True,
+                expose_value=False,
+                is_eager=True,
+                callback=_print_version,
+                help="Show the clawext version.",
+            ),
+        ],
+        callback=_hub_root,
     )
-    @click.version_option(__version__, prog_name="clawext")
-    def hub() -> None:
-        """Root group of the hub command line."""
-
-    hub.add_command(_ext_group(owner))
-    for item in results:
-        if item.extension is None:
-            continue
-        if plugin is not None and item.extension.plugin.name != plugin.name:
-            continue
-        group = to_click(item.extension)
-        add_builtin_commands(item.extension, group)
-        hub.add_command(group, name=item.extension.name)
+    hub.add_command(_ext_group(plugin or DEFAULT_PLUGIN))
     return hub
+
+
+def _print_version(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    """Eager ``--version`` callback."""
+    if value and not ctx.resilient_parsing:
+        click.echo(f"clawext {__version__}")
+        ctx.exit()
+
+
+@click.pass_context
+def _hub_root(ctx: click.Context, json_flag: bool) -> None:
+    """Record the hub-level ``--json`` for every extension below."""
+    ctx.meta[JSON_META] = json_flag
 
 
 def main() -> None:
