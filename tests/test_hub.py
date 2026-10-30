@@ -119,9 +119,9 @@ def test_install_builds_the_right_command(tmp_path: Path) -> None:
     runner = FakeRunner()
     manager.install(str(tmp_path), runner=runner)
     assert "-e" in runner.calls[-1] and runner.calls[-1][-1] == str(tmp_path)
-    manager.install("tds-remote", runner=runner)
-    assert "-e" not in runner.calls[-1] and runner.calls[-1][-1] == "tds-remote"
-    manager.install("tds-remote", editable=True, runner=runner)
+    manager.install("mypkg-docs", runner=runner)
+    assert "-e" not in runner.calls[-1] and runner.calls[-1][-1] == "mypkg-docs"
+    manager.install("mypkg-docs", editable=True, runner=runner)
     assert "-e" in runner.calls[-1]
 
 

@@ -11,7 +11,9 @@ from pathlib import Path
 
 from clawext import Config, Context, Plugin, extension, main_for
 
-PLUGIN = Plugin("tds", home="~/.tds", home_env="TDS_HOME")
+# A plugin groups related extensions and owns their home folder (config, secrets, state).
+# Skip `plugin=` for a standalone extension (home defaults to ~/.clawext).
+PLUGIN = Plugin("mycli", home="~/.mycli", home_env="MYCLI_HOME")
 
 
 class DocsConfig(Config):
@@ -35,7 +37,7 @@ def rename(ctx: Context, file: Path, dry_run: bool = False) -> dict[str, str]:
     return {"file": str(file), "dry_run": str(dry_run)}
 
 
-main = main_for(app)  # [project.scripts] tds-docs = "mypkg.cli:main"
+main = main_for(app)  # [project.scripts] mycli-docs = "mypkg.cli:main"
 ```
 
 Commands **return data**; the framework prints it (YAML for humans, JSON with `--json`

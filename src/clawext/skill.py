@@ -89,7 +89,7 @@ def render_commands(cli: str, schema: dict[str, Any]) -> str:
     """Render the command reference block (usage, help, parameters) as Markdown.
 
     Args:
-        cli: The command line prefix (``tds remote``).
+        cli: The command line prefix (``mycli docs``).
         schema: Result of :func:`extension_schema`.
 
     Returns:
